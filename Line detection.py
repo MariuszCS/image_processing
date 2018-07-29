@@ -164,9 +164,8 @@ def find_trajectory(lines):
     line_left = dict({})
     line_right = dict({})
     for line in lines:
-        # calculate the value of x for the y equal to the middle of the screen
-        #n = (y_middle - line["points"][0][1]) / line["vy"]
-        #x = line["points"][0][0] + n * line["vx"]
+        # x is somewhere on the line (one of its ends)
+        # we chose the line that is the closest to the middle of the frame from its left and right side
         x = line["points"][0][0]
         if x < x_middle and x > x_left:
             x_left = x
@@ -174,6 +173,11 @@ def find_trajectory(lines):
         elif x > x_middle and x < x_right:
             x_right = x
             line_right = line
+    # if both left and right lines are present
+    # we calculate the value of x in the middle og=f the frame height
+    # then we take the middle point between x from right and left
+    # we change the vy vector to be pointing the positive y direction
+    # then we calculate the resultant vector which is the direction for the trajectory
     if (x_left != -sys.maxsize and x_right != sys.maxsize):
         n = (y_middle - line_left["points"][0][1]) / line_left["vy"]
         x_left = line_left["points"][0][0] + n * line_left["vx"]
