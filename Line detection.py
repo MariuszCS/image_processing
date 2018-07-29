@@ -4,15 +4,36 @@ import sys
 import math
 
 #video = cv2.VideoCapture(0) ----- for camera read
-video = cv2.VideoCapture("Cut films/7.mp4")
+video = cv2.VideoCapture("Cut films/5.mp4")
 
 cv2.namedWindow('binary frame')
-cv2.createTrackbar('H', 'binary frame', 31, 174, lambda x: None)
+cv2.createTrackbar('H', 'binary frame', 20, 174, lambda x: None)
 cv2.setTrackbarMin('H', 'binary frame', 5)
 
 video_read_correctly, frame = video.read()
 
-def contour_to_lines(contour):
+def check_group_for_line(line, group, min_distance):
+    # n is the ratio from the following equation
+    # x2 = x1 + n * vx
+    # y2 = y1 + n * vy
+    # where (x1, y1) is point that belongs to the group and (x2, y2) to the line we want to classify
+    n1 = (line["points"][0][0] - group["points"][0][0]) / group["vx"]
+    #n2 = (labeled_line["points"][0][0] - line["points"][0][0]) / line["vx"]
+    # from the above equations the distance is the absolute value from (y1 - y2)
+    d1 = abs((group["points"][0][1] + n1 * group["vy"]) - line["points"][0][1])
+    #d2 = abs((line["points"][0][1] + n2 * line["vy"]) - labeled_line["points"][0][1])
+    #d_mean = (d1 + d2) / 2
+    # if d1 <= min([10, min_distance]) and d2 <= min([10, min_distance]):  ?
+    # if d_mean <= min([5, min_distance]): ?
+    if d1 <= min([5, min_distance]):
+        #min_distance = min([d1, d2])
+        min_distance = d1
+        return d1, True
+        
+    return min_distance, False
+
+
+def determine_lines_for_contour(contour):
     lines = []
     # fits line to every 8 points of the contour
     for index in range(0, len(contour), 10):
@@ -43,37 +64,20 @@ def contour_to_lines(contour):
         # different approach for lines with vx = 0
         if line["vx"] == 0:
             continue
-        # indicates if the line matches to any existing group
-        labeled = False
-        # used to chose the best matching goup
         min_distance = sys.maxsize
         # stores the group to which the line matches best
-        temp = dict({})
+        temp = dict({}) 
         # check every group 
         # the distance between the y of the line and the y (for the same x) of the group is calculated
         # if the distance (error) is small enough (<10) than the line is considered to match the group
         # the distance is calculated in both ways (from the line to group and from group to the line)
         # and the mean value is taken as the final distance
         for labeled_line in labeled_group:
-            # n is the ratio from the following equation
-            # x2 = x1 + n * vx
-            # y2 = y1 + n * vy
-            # where (x1, y1) is point that belongs to the group and (x2, y2) to the line we want to classify
-            n1 = (line["points"][0][0] - labeled_line["points"][0][0]) / labeled_line["vx"]
-            #n2 = (labeled_line["points"][0][0] - line["points"][0][0]) / line["vx"]
-            # from the above equations the distance is the absolute value from (y1 - y2)
-            d1 = abs((labeled_line["points"][0][1] + n1 * labeled_line["vy"]) - line["points"][0][1])
-            #d2 = abs((line["points"][0][1] + n2 * line["vy"]) - labeled_line["points"][0][1])
-            #d_mean = (d1 + d2) / 2
-            # if d1 <= min([10, min_distance]) and d2 <= min([10, min_distance]):  ?
-            # if d_mean <= min([5, min_distance]): ?
-            if d1 <= min([5, min_distance]):
+            min_distance, labeled = check_group_for_line(line, labeled_line, min_distance)
+            if labeled:
                 temp = labeled_line
-                #min_distance = min([d1, d2])
-                min_distance = d1
-                labeled = True
         # if the line did not match any group, it starts to represent a new group
-        if not labeled:
+        if min_distance == sys.maxsize:
             labeled_group.append(line)
         else:
             # the first element in "points" represents the mean point of the whole group
@@ -156,6 +160,39 @@ def contour_to_lines(contour):
     return line_pairs
     """
 
+def group_dashed_lines(lines):
+    start_index = 0
+    indices_taken = []
+    groups_to_be_removed = []
+    for line in lines:
+        start_index += 1
+        if line["vx"] == 0:
+            continue
+        if lines.index(line) not in indices_taken:
+            min_distance = sys.maxsize
+            temp = dict({})
+            for index in range(start_index, len(lines)):
+                if index not in indices_taken:
+                    min_distance, labeled = check_group_for_line(line, lines[index], min_distance)
+                    if labeled:
+                        temp = lines[index]
+            if min_distance != sys.maxsize:
+                indices_taken.append(lines.index(temp))
+                groups_to_be_removed.append(temp)
+                line["points"] += temp["points"][1:]
+                first_point = np.array([temp["points"][0][0], temp["points"][0][1]], dtype=float)
+                second_point = np.array([line["points"][0][0], line["points"][0][1]], dtype=float)
+                points = np.array([first_point, second_point])
+                vx, vy, x, y = cv2.fitLine(points, cv2.DIST_L2, 0, 0.01, 0.01)
+                vx, vy, x, y = float(vx), float(vy), float(x), float(y)
+                line["points"][0] = (x, y)
+                line["vx"] = vx
+                line["vy"] = vy
+    
+    for group in groups_to_be_removed:
+        lines.remove(group)
+
+    return lines
 
 def find_trajectory(lines):
     x_left = -sys.maxsize
@@ -216,15 +253,17 @@ while(video_read_correctly):
 
     _, contours, _ = cv2.findContours(extracted_color_frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
 
-    varitcal_lines = []
+    vertical_lines = []
     #cv2.drawContours(frame, contours, -1, (0, 0, 255), 1)
     for contour in contours:
 
         if cv2.contourArea(contour) >= 200:
 
-            varitcal_lines += contour_to_lines(contour)[0]
+            vertical_lines += determine_lines_for_contour(contour)[0]
 
-    find_trajectory(varitcal_lines)
+    vertical_lines = group_dashed_lines(vertical_lines)
+
+    find_trajectory(vertical_lines)
     cv2.imshow("binary frame", frame)
 
     if cv2.waitKey(20) & 0xFF == ord('q'):
