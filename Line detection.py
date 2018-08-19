@@ -4,14 +4,6 @@ import sys
 import math
 import time
 
-#video = cv2.VideoCapture(0) ----- for camera read
-video = cv2.VideoCapture("Cut films/1.mp4")
-
-cv2.namedWindow('binary frame')
-cv2.createTrackbar('H', 'binary frame', 24, 174, lambda x: None)
-cv2.setTrackbarMin('H', 'binary frame', 5)
-
-video_read_correctly, frame = video.read()
 
 def check_group_for_line(line, group, min_distance, max_distance):
     # the distance between the y of the line and the y (for the same x) of the group is calculated
@@ -136,7 +128,7 @@ def group_dashed_lines(lines, divide_into_subsets):
 
     return lines, False
 
-def find_trajectory(lines):
+def find_trajectory(lines, frame):
     x_left = -sys.maxsize
     x_right = sys.maxsize 
     x_middle = frame.shape[1] / 2
@@ -197,15 +189,15 @@ def find_extreme_points(points):
             min_y = point[0][1]
     return min_x, max_x, min_y, max_y
 
-def draw_line(line):
+def draw_line(line, frame):
     for index in range(0, line["original"].shape[0]):
         cv2.circle(frame, (line["original"][index][0][0], line["original"][index][0][1]), 2, (255, 0, 0), -1)
 
-def filter_small_lines(lines):
+def filter_small_lines(lines, x_distance, y_distance):
     to_be_removed = []
     for line in lines:
         min_x, max_x, min_y, max_y = find_extreme_points(line["original"])
-        if max_x - min_x < frame.shape[1] / 20 and max_y - min_y < frame.shape[0] / 20:
+        if max_x - min_x < x_distance and max_y - min_y < y_distance:
             to_be_removed.append(line)
     for line in to_be_removed:
         lines.remove(line)
@@ -236,9 +228,9 @@ def filter_not_paired_lines(lines):
     for line in not_paired:
         lines.remove(line)
 
-    return not_paired
+    return lines
 
-def compute_translation(first_set, second_set):
+def compute_rotation_and_translation(first_set, second_set):
     #using Kabsch algorithm: https://en.wikipedia.org/wiki/Kabsch_algorithm
     first_centroid = np.mean(first_set, axis=0)
     second_centroid = np.mean(second_set, axis=0)
@@ -252,56 +244,11 @@ def compute_translation(first_set, second_set):
     return rotation, translation
 
 
-
-next_frame = None
-#bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-orb = cv2.ORB_create()
-kp1, des1 = orb.detectAndCompute(frame, None)
-FLANN_INDEX_LSH = 6
-index_params= dict(algorithm = FLANN_INDEX_LSH,
-                   table_number = 12,
-                   key_size = 20,     
-                   multi_probe_level = 2)
-search_params = dict(checks=50)
-flann_matcher = cv2.FlannBasedMatcher(index_params, search_params)
-displ_x = 0
-displ_y = 0
-while(video_read_correctly):
-    #start = time.process_time()
-    if next_frame is not None:
-        kp2, des2 = orb.detectAndCompute(next_frame,None)
-        matches = flann_matcher.match(des1,des2)
-        matches = sorted(matches, key = lambda x:x.distance)
-        first_set = []
-        second_set = []
-        for match in matches[:10]:
-            first_set += [kp1[match.queryIdx].pt]
-            second_set += [kp2[match.trainIdx].pt]
-        first_set = np.array(first_set, dtype=np.int32)
-        second_set = np.array(second_set, dtype=np.int32)
-        #print(kp1[0].pt)
-        #print(np.array([kp.pt for kp in kp1], dtype=np.int32))
-        matrices = compute_translation(first_set, second_set)
-        displ_x += matrices[1][0]
-        displ_y += matrices[1][1]
-        #print(find_centroid(kp2))
-        # Sort them in the order of their distance.
-        
-
-        # Draw first 10 matchesframe
-        img3 = cv2.drawMatches(frame, kp1, next_frame, kp2, matches[:10], outImg=np.array([]), flags=0)
-        #plt.imshow(img3),plt.show()
-        kp1 = kp2.copy()
-        des1 = des2.copy()
-        #current_frame = next_frame.copy()
-    #end = time.process_time()
-    #print(end - start)
-    #input()
+def detect_lines(frame, frame_area, hue):
     hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    H = cv2.getTrackbarPos('H', 'binary frame')
-    lower_H = np.array([[[H - 5, 75, 75]]])
-    upper_H = np.array([[[H + 5, 255, 255]]])
+    lower_H = np.array([[[hue - 5, 75, 75]]])
+    upper_H = np.array([[[hue + 5, 255, 255]]])
         
     extracted_color_frame = cv2.inRange(hsv_frame, lower_H, upper_H)
 
@@ -312,7 +259,7 @@ while(video_read_correctly):
     
     for contour in contours:
         
-        if cv2.contourArea(contour) >= 300:
+        if cv2.contourArea(contour) >= frame_area / 2000:
             
             temp = determine_lines_for_contour(contour)
             
@@ -335,26 +282,127 @@ while(video_read_correctly):
         number_of_groups = len(lines)
         lines, _ = group_dashed_lines(lines, False)
 
-    lines = [line for line in lines if line["original"].shape[0] >= 6 or len(line["points"]) > 2]
-    filter_small_lines(lines)
-    
-    #input()
-    #filter_not_paired_lines(lines)
-    for line in lines:
-        #p1, p2 = find_extreme_points(line)
-        #fit_line(np.array([[p1, p2]], dtype=np.int32), line)
-        
-        #print(line["original"][0][0])
-        #cv2.line(frame, p1, p2, (255, 0, 0), 2) 
+    lines = [line for line in lines if line["original"].shape[0] >= 6]
+    filter_small_lines(lines, frame.shape[1] / 20, frame.shape[0] / 20)
 
-        draw_line(line)
-        #for point in line["points"]:
-            #cv2.circle(frame, (int(point[0]), int(point[1])), 2, (255, 255, 255), -1)
+    return lines
+
+
+###################################################################
+##################### LINE COLOR DETECTION ########################
+###################################################################
+
+#video = cv2.VideoCapture(0) ----- for camera read
+""" video = cv2.VideoCapture("Cut films/1.mp4")
+
+video_read_correctly, frame = video.read()
+frame_area = frame.shape[0] * frame.shape[1]
+
+best_matches = []
+counter = 0
+while video_read_correctly:
+    if counter > 5:
+        break
+    hue = 5
+    best_hue = 0
+    best_mean = -1
+    best_hues = []
+    best_mean_length = -1
+    not_paired_no = 0
+    no_pair = sys.maxsize
+    while hue <= 174:
+        lines = detect_lines(frame, frame_area, hue)
+        if len(lines) >= 2:
+            number_of_points = 0
+            for line in lines:
+                min_x, max_x, min_y, max_y = find_extreme_points(line["original"])
+                length = math.sqrt((max_x - min_x)**2 + (max_y - min_y)**2)
+                number_of_points += line["original"].shape[0]
+            mean_no_of_points_per_line = number_of_points / len(lines)
+            l = len(lines)
+            mean_length = length / len(lines)
+            not_paired_no = len(lines)
+            lines = filter_not_paired_lines(lines)
+            not_paired_no -= len(lines)
+            #if abs(mean_length - best_mean_length) < 10:
+                #best_hues.append(hue)
+            if not_paired_no / l < no_pair:
+                no_pair = not_paired_no / l
+                best_mean_length = mean_length
+                best_hues.append(hue)
+                best_hue = hue
+        hue += 1
+    best_matches.append(best_hues)
+    video_read_correctly, frame = video.read()
+    counter += 1
+
+print(best_matches)
+
+video.release()
+cv2.destroyAllWindows() """
+############################################################################
+
+video = cv2.VideoCapture("Cut films/1.mp4")
+video_read_correctly, frame = video.read()
+frame_area = frame.shape[0] * frame.shape[1]
+cv2.namedWindow('binary frame')
+cv2.createTrackbar('H', 'binary frame', 7, 174, lambda x: None)
+cv2.setTrackbarMin('H', 'binary frame', 5)
+H = cv2.getTrackbarPos('H', 'binary frame')
+next_frame = None
+#bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+orb = cv2.ORB_create()
+kp1, des1 = orb.detectAndCompute(frame, None)
+FLANN_INDEX_LSH = 6
+index_params= dict(algorithm = FLANN_INDEX_LSH,
+                   table_number = 12,
+                   key_size = 20,     
+                   multi_probe_level = 2)
+search_params = dict(checks=50)
+flann_matcher = cv2.FlannBasedMatcher(index_params, search_params)
+displ_x = 0
+displ_y = 0
+
+
+while video_read_correctly:
+    #start = time.process_time()
+    if next_frame is not None:
+        kp2, des2 = orb.detectAndCompute(next_frame,None)
+        matches = flann_matcher.match(des1,des2)
+        matches = sorted(matches, key = lambda x:x.distance)
+        first_set = []
+        second_set = []
+        for match in matches[:10]:
+            first_set += [kp1[match.queryIdx].pt]
+            second_set += [kp2[match.trainIdx].pt]
+        first_set = np.array(first_set, dtype=np.int32)
+        second_set = np.array(second_set, dtype=np.int32)
+       
+        matrices = compute_rotation_and_translation(first_set, second_set)
+        displ_x += matrices[1][0]
+        displ_y += matrices[1][1]
+
+        # Draw first 10 matchesframe
+        #img3 = cv2.drawMatches(frame, kp1, next_frame, kp2, matches[:10], outImg=np.array([]), flags=0)
+        #plt.imshow(img3),plt.show()
+        kp1 = kp2.copy()
+        des1 = des2.copy()
+
+    #end = time.process_time()
+    #print(end - start)
+    #input()
+    lines = detect_lines(frame, frame_area, H)
+
+
+    for line in lines:
+
+        draw_line(line, frame)
+
     cv2.imshow("binary frame", frame)
 
     if cv2.waitKey(2) & 0xFF == ord('q'):
         break
-        #input()
+    #input()
 
 
         #cv2.drawContours(frame, [np.append(line["original"][0], line["original"][-1], axis=0)], -1, (0, 0, 255), 1, cv2.LINE_AA)
