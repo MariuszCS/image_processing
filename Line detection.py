@@ -190,8 +190,25 @@ def find_extreme_points(points):
     return min_x, max_x, min_y, max_y
 
 def draw_line(line, frame):
-    for index in range(0, line["original"].shape[0]):
-        cv2.circle(frame, (line["original"][index][0][0], line["original"][index][0][1]), 2, (255, 0, 0), -1)
+    min_x, max_x, min_y, max_y = find_extreme_points(line["original"])
+    y1, y2 = -1, -1
+    x1, x2 = -1, -1
+    for point in line["original"]:
+        if max_x - min_x > max_y - min_y:
+            if point[0][0] == min_x:
+                y1 = point[0][1]
+            if point[0][0] == max_x:
+                y2 = point[0][1]
+        else:
+            if point[0][1] == min_y:
+                x1 = point[0][0]
+            if point[0][1] == max_y:
+                x2 = point[0][0]
+    if y1 != -1:
+        cv2.line(frame, (min_x, y1), (max_x, y2), (0, 0, 255), 2)
+    else:
+        cv2.line(frame, (x1, min_y), (x2, max_y), (0, 0, 255), 2)
+
 
 def filter_small_lines(lines, x_distance, y_distance):
     to_be_removed = []
@@ -259,7 +276,7 @@ def detect_lines(frame, frame_area, hue):
     
     for contour in contours:
         
-        if cv2.contourArea(contour) >= frame_area / 2000:
+        if cv2.contourArea(contour) >= frame_area / 3000:
             
             contour_lines = determine_lines_for_contour(contour)
             
@@ -346,7 +363,7 @@ video = cv2.VideoCapture("Cut films/1.mp4")
 video_read_correctly, frame = video.read()
 frame_area = frame.shape[0] * frame.shape[1]
 cv2.namedWindow('binary frame')
-cv2.createTrackbar('H', 'binary frame', 7, 174, lambda x: None)
+cv2.createTrackbar('H', 'binary frame', 24, 174, lambda x: None)
 cv2.setTrackbarMin('H', 'binary frame', 5)
 H = cv2.getTrackbarPos('H', 'binary frame')
 next_frame = None
@@ -401,7 +418,7 @@ while video_read_correctly:
 
     if cv2.waitKey(2) & 0xFF == ord('q'):
         break
-    #input()
+    input()
 
 
         #cv2.drawContours(frame, [np.append(line["original"][0], line["original"][-1], axis=0)], -1, (0, 0, 255), 1, cv2.LINE_AA)
