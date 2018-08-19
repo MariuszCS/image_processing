@@ -85,7 +85,7 @@ def determine_lines_for_contour(contour, batch_size = -1):
 
     return lines
 
-def group_dashed_lines(lines, divide_into_subsets):
+def group_lines(lines, divide_into_subsets):
     to_be_removed = []
     # for every line (group) we check if it can be merged to other line (group)
     for line in lines:
@@ -261,26 +261,26 @@ def detect_lines(frame, frame_area, hue):
         
         if cv2.contourArea(contour) >= frame_area / 2000:
             
-            temp = determine_lines_for_contour(contour)
+            contour_lines = determine_lines_for_contour(contour)
             
             new_lines = True
             
             while new_lines:
-                temp, new_lines = group_dashed_lines(temp, True)
+                contour_lines, new_lines = group_lines(contour_lines, True)
 
             number_of_groups = sys.maxsize
 
-            while number_of_groups > len(temp):
-                number_of_groups = len(temp)
-                temp, _ = group_dashed_lines(temp, False)
+            while number_of_groups > len(contour_lines):
+                number_of_groups = len(contour_lines)
+                contour_lines, _ = group_lines(contour_lines, False)
 
-            lines += temp
+            lines += contour_lines
 
     number_of_groups = sys.maxsize
 
     while number_of_groups > len(lines):
         number_of_groups = len(lines)
-        lines, _ = group_dashed_lines(lines, False)
+        lines, _ = group_lines(lines, False)
 
     lines = [line for line in lines if line["original"].shape[0] >= 6]
     filter_small_lines(lines, frame.shape[1] / 20, frame.shape[0] / 20)
@@ -392,7 +392,6 @@ while video_read_correctly:
     #print(end - start)
     #input()
     lines = detect_lines(frame, frame_area, H)
-
 
     for line in lines:
 
