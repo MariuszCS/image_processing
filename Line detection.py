@@ -85,7 +85,7 @@ def determine_lines_for_contour(contour, batch_size = -1):
 
     return lines
 
-def group_lines(lines, divide_into_subsets):
+def group_lines(lines, divide_into_subsets = False):
     to_be_removed = []
     # for every line (group) we check if it can be merged to other line (group)
     for line in lines:
@@ -248,7 +248,7 @@ def filter_not_paired_lines(lines):
     return lines
 
 def compute_rotation_and_translation(first_set, second_set):
-    #using Kabsch algorithm: https://en.wikipedia.org/wiki/Kabsch_algorithm
+    # using Kabsch algorithm: https://en.wikipedia.org/wiki/Kabsch_algorithm
     first_centroid = np.mean(first_set, axis=0)
     second_centroid = np.mean(second_set, axis=0)
     first_set_centered = first_set - first_centroid
@@ -289,15 +289,17 @@ def detect_lines(frame, frame_area, hue):
 
             while number_of_groups > len(contour_lines):
                 number_of_groups = len(contour_lines)
-                contour_lines, _ = group_lines(contour_lines, False)
+                contour_lines, _ = group_lines(contour_lines)
 
             lines += contour_lines
+
+    
 
     number_of_groups = sys.maxsize
 
     while number_of_groups > len(lines):
         number_of_groups = len(lines)
-        lines, _ = group_lines(lines, False)
+        lines, _ = group_lines(lines)
 
     lines = [line for line in lines if line["original"].shape[0] >= 6]
     filter_small_lines(lines, frame.shape[1] / 20, frame.shape[0] / 20)
@@ -305,67 +307,15 @@ def detect_lines(frame, frame_area, hue):
     return lines
 
 
-###################################################################
-##################### LINE COLOR DETECTION ########################
-###################################################################
-
-#video = cv2.VideoCapture(0) ----- for camera read
-""" video = cv2.VideoCapture("Cut films/1.mp4")
+video = cv2.VideoCapture("Cut films/5.mp4")
 
 video_read_correctly, frame = video.read()
-frame_area = frame.shape[0] * frame.shape[1]
 
-best_matches = []
-counter = 0
-while video_read_correctly:
-    if counter > 5:
-        break
-    hue = 5
-    best_hue = 0
-    best_mean = -1
-    best_hues = []
-    best_mean_length = -1
-    not_paired_no = 0
-    no_pair = sys.maxsize
-    while hue <= 174:
-        lines = detect_lines(frame, frame_area, hue)
-        if len(lines) >= 2:
-            number_of_points = 0
-            for line in lines:
-                min_x, max_x, min_y, max_y = find_extreme_points(line["original"])
-                length = math.sqrt((max_x - min_x)**2 + (max_y - min_y)**2)
-                number_of_points += line["original"].shape[0]
-            mean_no_of_points_per_line = number_of_points / len(lines)
-            l = len(lines)
-            mean_length = length / len(lines)
-            not_paired_no = len(lines)
-            lines = filter_not_paired_lines(lines)
-            not_paired_no -= len(lines)
-            #if abs(mean_length - best_mean_length) < 10:
-                #best_hues.append(hue)
-            if not_paired_no / l < no_pair:
-                no_pair = not_paired_no / l
-                best_mean_length = mean_length
-                best_hues.append(hue)
-                best_hue = hue
-        hue += 1
-    best_matches.append(best_hues)
-    video_read_correctly, frame = video.read()
-    counter += 1
-
-print(best_matches)
-
-video.release()
-cv2.destroyAllWindows() """
-############################################################################
-
-video = cv2.VideoCapture("Cut films/1.mp4")
-video_read_correctly, frame = video.read()
-frame_area = frame.shape[0] * frame.shape[1]
 cv2.namedWindow('binary frame')
-cv2.createTrackbar('H', 'binary frame', 24, 174, lambda x: None)
+cv2.createTrackbar('H', 'binary frame', 20, 174, lambda x: None)
 cv2.setTrackbarMin('H', 'binary frame', 5)
 H = cv2.getTrackbarPos('H', 'binary frame')
+
 next_frame = None
 #bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 orb = cv2.ORB_create()
@@ -377,9 +327,10 @@ index_params= dict(algorithm = FLANN_INDEX_LSH,
                    multi_probe_level = 2)
 search_params = dict(checks=50)
 flann_matcher = cv2.FlannBasedMatcher(index_params, search_params)
+
 displ_x = 0
 displ_y = 0
-
+frame_area = frame.shape[0] * frame.shape[1]
 
 while video_read_correctly:
     #start = time.process_time()
@@ -410,6 +361,9 @@ while video_read_correctly:
     #input()
     lines = detect_lines(frame, frame_area, H)
 
+    
+
+
     for line in lines:
 
         draw_line(line, frame)
@@ -418,7 +372,7 @@ while video_read_correctly:
 
     if cv2.waitKey(2) & 0xFF == ord('q'):
         break
-    input()
+    #input()
 
 
         #cv2.drawContours(frame, [np.append(line["original"][0], line["original"][-1], axis=0)], -1, (0, 0, 255), 1, cv2.LINE_AA)
@@ -432,3 +386,7 @@ while video_read_correctly:
 
 video.release()
 cv2.destroyAllWindows()
+
+
+# przedstawic jak algorytm sie zmienial wraz z obrazkami i przykladami
+# poprawic zeby nie laczyl linii ktore sa daleko od siebie
