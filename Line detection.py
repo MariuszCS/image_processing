@@ -85,26 +85,37 @@ def determine_lines_for_contour(contour, batch_size = -1):
 
     return lines
 
-def group_lines(lines, divide_into_subsets = False):
+def group_lines(lines, divide_into_subsets = False, group_all_contours = False, frame = None):
     to_be_removed = []
+    to_skip = []
     # for every line (group) we check if it can be merged to other line (group)
     for line in lines:
         # check if the line with which we want to marge is not already marged
-        if line not in to_be_removed:
+        if line not in to_be_removed and line not in to_skip:
             min_distance = sys.maxsize
-            temp = dict({})
+            temp = None
             for index in range(0, len(lines)):
                 # check if the line we want to merge to was not previously merged
-                if lines[index] not in to_be_removed and lines[index] is not line: 
+                if lines[index] not in to_be_removed and lines[index] not in to_skip and lines[index] is not line: 
                     min_distance, labeled = check_group_for_line(line, lines[index], min_distance, 5)
                     if labeled:
                         temp = lines[index]
             if min_distance != sys.maxsize:
-                to_be_removed.append(line)
-                temp["points"] += line["points"]
-                temp["original"] = np.append(temp["original"], line["original"], axis=0)
-                 # if we have merged two lines/groups, we recalculate the mean point of the group
-                fit_line(temp["original"], temp)
+
+                lines_too_far = False
+
+                if group_all_contours:
+
+                    lines_too_far = check_lines_distance(temp, line)
+                    
+                if not lines_too_far:
+                    to_be_removed.append(line)
+                    temp["points"] += line["points"]
+                    temp["original"] = np.append(temp["original"], line["original"], axis=0)
+                    # if we have merged two lines/groups, we recalculate the mean point of the group
+                    fit_line(temp["original"], temp)
+                else:
+                    to_skip += [temp, line]
 
     # remove lines that were merged to other lines
     for group in to_be_removed:
@@ -127,6 +138,39 @@ def group_lines(lines, divide_into_subsets = False):
             return lines, True
 
     return lines, False
+
+
+def check_lines_distance(first_line, second_line):
+    l1_min_x_point, l1_max_x_point, l1_min_y_point, l1_max_y_point = find_extreme_points(first_line["original"])
+    l2_min_x_point, l2_max_x_point, l2_min_y_point, l2_max_y_point = find_extreme_points(second_line["original"])
+    l1_min_point, l1_max_point = -1, -1
+    l2_min_point, l2_max_point = -1, -1
+    if l1_max_x_point[0] - l1_min_x_point[0] > l1_max_y_point[1] - l1_min_y_point[1]:
+        l1_min_point = l1_min_x_point
+        l1_max_point = l1_max_x_point
+    else:
+        l1_min_point = l1_min_y_point
+        l1_max_point = l1_max_y_point
+    if l2_max_x_point[0] - l2_min_x_point[0] > l2_max_y_point[1] - l2_min_y_point[1]:
+        l2_min_point = l2_min_x_point
+        l2_max_point = l2_max_x_point
+    else:
+        l2_min_point = l2_min_y_point
+        l2_max_point = l2_max_y_point
+    if min([math.sqrt((l1_min_point[0] - l2_max_point[0]) ** 2 + (l1_min_point[1] - l2_max_point[1]) ** 2),\
+        math.sqrt((l1_max_point[0] - l2_min_point[0]) ** 2 + (l1_max_point[1] - l2_min_point[1]) ** 2)]) > 100:
+        """ draw_line(line, frame, (0,255,0))
+        draw_line(temp, frame)
+        cv2.imshow("binary frame", frame)
+
+        if cv2.waitKey(2) & 0xFF == ord('q'):
+            break
+        input() """
+        return True
+
+    return False
+
+
 
 def find_trajectory(lines, frame):
     x_left = -sys.maxsize
@@ -174,47 +218,38 @@ def find_trajectory(lines, frame):
         cv2.line(frame, (int(x_top), 0), (int(x_bottom), frame.shape[0]), (255, 0, 0), 2) 
 
 def find_extreme_points(points):
-    max_x = -sys.maxsize
-    min_x = sys.maxsize
-    max_y = -sys.maxsize
-    min_y = sys.maxsize
+    max_x, max_x_y = -sys.maxsize, -sys.maxsize
+    min_x, min_x_y = sys.maxsize, sys.maxsize
+    max_y, max_y_x = -sys.maxsize, -sys.maxsize
+    min_y, min_y_x = sys.maxsize, sys.maxsize
     for point in points:
-        if point[0][0] > max_x:
+        if point[0][0] >= max_x:
             max_x = point[0][0]
-        if point[0][0] < min_x:
+            max_x_y = point[0][1]
+        if point[0][0] <= min_x:
             min_x = point[0][0]
-        if point[0][1] > max_y:
+            min_x_y = point[0][1]
+        if point[0][1] >= max_y:
             max_y = point[0][1]
-        if point[0][1] < min_y:
+            max_y_x = point[0][0]
+        if point[0][1] <= min_y:
             min_y = point[0][1]
-    return min_x, max_x, min_y, max_y
+            min_y_x = point[0][0]
+    return (min_x, min_x_y), (max_x, max_x_y), (min_y_x, min_y), (max_y_x, max_y)
 
-def draw_line(line, frame):
-    min_x, max_x, min_y, max_y = find_extreme_points(line["original"])
-    y1, y2 = -1, -1
-    x1, x2 = -1, -1
-    for point in line["original"]:
-        if max_x - min_x > max_y - min_y:
-            if point[0][0] == min_x:
-                y1 = point[0][1]
-            if point[0][0] == max_x:
-                y2 = point[0][1]
-        else:
-            if point[0][1] == min_y:
-                x1 = point[0][0]
-            if point[0][1] == max_y:
-                x2 = point[0][0]
-    if y1 != -1:
-        cv2.line(frame, (min_x, y1), (max_x, y2), (0, 0, 255), 2)
+def draw_line(line, frame, color = (0, 0, 255), thickness = 2):
+    min_x_point, max_x_point, min_y_point, max_y_point = find_extreme_points(line["original"])
+    if max_x_point[0] - min_x_point[0] > max_y_point[1] - min_y_point[1]:
+        cv2.line(frame, min_x_point, max_x_point, color, thickness)
     else:
-        cv2.line(frame, (x1, min_y), (x2, max_y), (0, 0, 255), 2)
+        cv2.line(frame, min_y_point, max_y_point, color, thickness)
 
 
 def filter_small_lines(lines, x_distance, y_distance):
     to_be_removed = []
     for line in lines:
-        min_x, max_x, min_y, max_y = find_extreme_points(line["original"])
-        if max_x - min_x < x_distance and max_y - min_y < y_distance:
+        min_x_point, max_x_point, min_y_point, max_y_point = find_extreme_points(line["original"])
+        if max_x_point[0] - min_x_point[0] < x_distance and max_y_point[1] - min_y_point[1] < y_distance:
             to_be_removed.append(line)
     for line in to_be_removed:
         lines.remove(line)
@@ -293,13 +328,11 @@ def detect_lines(frame, frame_area, hue):
 
             lines += contour_lines
 
-    
-
     number_of_groups = sys.maxsize
 
     while number_of_groups > len(lines):
         number_of_groups = len(lines)
-        lines, _ = group_lines(lines)
+        lines, _ = group_lines(lines, False, True, frame)
 
     lines = [line for line in lines if line["original"].shape[0] >= 6]
     filter_small_lines(lines, frame.shape[1] / 20, frame.shape[0] / 20)
@@ -364,9 +397,9 @@ while video_read_correctly:
     
 
 
-    for line in lines:
+    #for line in lines:
 
-        draw_line(line, frame)
+        #draw_line(line, frame)
 
     cv2.imshow("binary frame", frame)
 
