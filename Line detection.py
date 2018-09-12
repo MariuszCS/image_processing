@@ -7,7 +7,7 @@ import time
 
 def check_group_for_line(line, group, min_distance, max_distance):
     # the distance between the y of the line and the y (for the same x) of the group is calculated
-    # if the distance (error) is small enough (<5) than the line is considered to match the group
+    # if the distance (error) is small enough (<min([max_distance, min_distance])) than the line is considered to match the group
     # the distance is calculated in both ways (from the line to group and from group to the line)
     # and the mean value is taken as the final distance
     # n is the ratio from the following equation
@@ -26,8 +26,10 @@ def check_group_for_line(line, group, min_distance, max_distance):
         # we calculate the mean distance
         ratio = line_length / group_length
         if ratio < 1:
+            ratio = max([0.2, ratio])
             d_mean = (d1  + d2 * ratio) / (1 + ratio)
         else:
+            ratio = min([5, ratio])
             d_mean = (d1 * 1 / ratio + d2) / (1 + 1 / ratio)
     elif line["vx"] == 0 and group["vx"] != 0:
         n1 = (line["points"][0][0] - group["points"][0][0]) / group["vx"]
@@ -57,15 +59,17 @@ def fit_line(fit_to, save_to):
 
 def determine_lines_for_contour(contour, batch_size = -1):
     lines = []
-    # fits line to every 10% of the points of the contour
-    # or every 2 points if the contour length is < 20
+    # fits line to every 15% of the points of the contour (if batch_size paramter not specified)
+    # or every 2 points if the contour length is < 14
     contour_length = len(contour)
+    # , 
     if batch_size == -1:
         batch_size = 2
         if contour_length > 13:
-            batch_size = int(0.16 * contour_length)
+            batch_size = int(0.15 * contour_length)
     for index in range(0, contour_length - 1, batch_size):
         points = []
+        # make sure that we won't end up with one point
         if contour_length - (index + batch_size) != 2:
             points = contour[index : index + batch_size]
         else:
@@ -81,40 +85,53 @@ def determine_lines_for_contour(contour, batch_size = -1):
                 }
             )
         )
+        # fit line to the points that have just been chosen
         fit_line(points, lines[-1])
 
     return lines
 
-def group_lines(lines, divide_into_subsets = False, group_all_contours = False, frame = None):
+def group_lines(lines, divide_into_subsets = False, group_all_contours = False, frame = None, max_error = 5, max_line_distance = 100):
     to_be_removed = []
     to_skip = []
-    # for every line (group) we check if it can be merged to other line (group)
+    # for every line we check if it can be merged to other line
     for line in lines:
-        # check if the line with which we want to marge is not already marged
+        # check if the line which we want to marge is not already marged
+        # other case is that this line was considered as best match of previously checked line but
+        # is too far, so there is no need to calculate it again (if 1 is too far from 2, than 2 is too far from 1 as well)
         if line not in to_be_removed and line not in to_skip:
             min_distance = sys.maxsize
             temp = None
+            # iterating through all lines, to find the best candidate
             for index in range(0, len(lines)):
                 # check if the line we want to merge to was not previously merged
-                if lines[index] not in to_be_removed and lines[index] not in to_skip and lines[index] is not line: 
-                    min_distance, labeled = check_group_for_line(line, lines[index], min_distance, 5)
+                # or it is not itself
+                # or as previously, has been already considered and is too far
+                if lines[index] not in to_be_removed and lines[index] not in to_skip and lines[index] is not line:
+                    min_distance, labeled = check_group_for_line(line, lines[index], min_distance, max_error)
                     if labeled:
                         temp = lines[index]
+            # if any candidate was found the distance should be different than the init value
             if min_distance != sys.maxsize:
 
                 lines_too_far = False
 
+                
                 if group_all_contours:
+                    # checkis the two lines are not too far from each other
+                    lines_too_far = check_lines_distance(temp, line, max_line_distance)
 
-                    lines_too_far = check_lines_distance(temp, line)
-                    
+                # if the group_all_contours is False, than this condition will always be True
                 if not lines_too_far:
+                    # mark line as merged so it won't be considered in next iterations
                     to_be_removed.append(line)
+                    # merge lines
                     temp["points"] += line["points"]
                     temp["original"] = np.append(temp["original"], line["original"], axis=0)
-                    # if we have merged two lines/groups, we recalculate the mean point of the group
+                    # recalculate the point that represents the line
                     fit_line(temp["original"], temp)
                 else:
+                    # this lines are each other best candidates, however they are too far from each other,
+                    # so they are marked as lines to be skipped in next iterations
                     to_skip += [temp, line]
 
     # remove lines that were merged to other lines
@@ -126,13 +143,19 @@ def group_lines(lines, divide_into_subsets = False, group_all_contours = False, 
         to_be_removed = []
 
         for line in lines:
+            # if the line was not merged (len(line["points"]) == 1) and if it contains more than 3 points
             if len(line["points"]) == 1 and line["original"].shape[0] >= 4:
+                # mark line as to be removed
                 to_be_removed.append(line)
+                # create 2 new lines containing half of the points of the original line each (+/- 1 for odd number of points)
                 new_lines += determine_lines_for_contour(line["original"], int(line["original"].shape[0] / 2))
 
+        # remove lines marked as to be removed in the previous step
         for line in to_be_removed:
             lines.remove(line)
 
+        # add newly created lines to the whole list of lines, so they will be considered in 
+        # the next iterations of this algorithm
         if len(new_lines) > 0:
             lines += new_lines
             return lines, True
@@ -140,11 +163,15 @@ def group_lines(lines, divide_into_subsets = False, group_all_contours = False, 
     return lines, False
 
 
-def check_lines_distance(first_line, second_line):
+def check_lines_distance(first_line, second_line, max_line_distance):
+    # find extreme points of the lines
     l1_min_x_point, l1_max_x_point, l1_min_y_point, l1_max_y_point = find_extreme_points(first_line["original"])
     l2_min_x_point, l2_max_x_point, l2_min_y_point, l2_max_y_point = find_extreme_points(second_line["original"])
     l1_min_point, l1_max_point = -1, -1
     l2_min_point, l2_max_point = -1, -1
+    # in order to chose 2 extreme points (from the 4 available) we have to check
+    # the relation between the distance in x direction and distance in y direction
+    # of that line
     if l1_max_x_point[0] - l1_min_x_point[0] > l1_max_y_point[1] - l1_min_y_point[1]:
         l1_min_point = l1_min_x_point
         l1_max_point = l1_max_x_point
@@ -157,8 +184,11 @@ def check_lines_distance(first_line, second_line):
     else:
         l2_min_point = l2_min_y_point
         l2_max_point = l2_max_y_point
+    # the min distance between the opposite line ends is the distance between the lines
+    # if it is bigger than max_line_distance, the lines are too far
     if min([math.sqrt((l1_min_point[0] - l2_max_point[0]) ** 2 + (l1_min_point[1] - l2_max_point[1]) ** 2),\
-        math.sqrt((l1_max_point[0] - l2_min_point[0]) ** 2 + (l1_max_point[1] - l2_min_point[1]) ** 2)]) > 100:
+        math.sqrt((l1_max_point[0] - l2_min_point[0]) ** 2 + (l1_max_point[1] - l2_min_point[1]) ** 2)]) > \
+        max_line_distance:
         """ draw_line(line, frame, (0,255,0))
         draw_line(temp, frame)
         cv2.imshow("binary frame", frame)
@@ -222,6 +252,9 @@ def find_extreme_points(points):
     min_x, min_x_y = sys.maxsize, sys.maxsize
     max_y, max_y_x = -sys.maxsize, -sys.maxsize
     min_y, min_y_x = sys.maxsize, sys.maxsize
+    # iterate through all points, and find all 4 extreme points, with corresponding second coordinate
+    # since the points are approximated by a line, but are not perfectly collinear,
+    # there could be 4 extreme points and not only 2
     for point in points:
         if point[0][0] >= max_x:
             max_x = point[0][0]
@@ -238,6 +271,7 @@ def find_extreme_points(points):
     return (min_x, min_x_y), (max_x, max_x_y), (min_y_x, min_y), (max_y_x, max_y)
 
 def draw_line(line, frame, color = (0, 0, 255), thickness = 2):
+    # draws the line between the extreme points of the given line
     min_x_point, max_x_point, min_y_point, max_y_point = find_extreme_points(line["original"])
     if max_x_point[0] - min_x_point[0] > max_y_point[1] - min_y_point[1]:
         cv2.line(frame, min_x_point, max_x_point, color, thickness)
@@ -249,6 +283,8 @@ def filter_small_lines(lines, x_distance, y_distance):
     to_be_removed = []
     for line in lines:
         min_x_point, max_x_point, min_y_point, max_y_point = find_extreme_points(line["original"])
+        # if line width is smaller than x_distance and line height is smaller than y_distance
+        # than the line is considered as too small and is marked as to be removed
         if max_x_point[0] - min_x_point[0] < x_distance and max_y_point[1] - min_y_point[1] < y_distance:
             to_be_removed.append(line)
     for line in to_be_removed:
@@ -295,57 +331,69 @@ def compute_rotation_and_translation(first_set, second_set):
     translation = second_centroid - np.matmul(rotation, first_centroid)
     return rotation, translation
 
-
-def detect_lines(frame, frame_area, hue):
+def find_contours(frame, hue):
+    # convert color space from BGR to HSV
     hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
+    # define the color range we are interested in
     lower_H = np.array([[[hue - 5, 75, 75]]])
     upper_H = np.array([[[hue + 5, 255, 255]]])
-        
+
+    # change the frame into binary image, where regions with color that lies in the
+    # previously specified range are white and the rest is black    
     extracted_color_frame = cv2.inRange(hsv_frame, lower_H, upper_H)
 
+    # extract contours from the binary image
     _, contours, _ = cv2.findContours(extracted_color_frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
+
+    return contours
+
+
+def detect_lines(frame, frame_area, hue, max_line_distance):
+    
+    contours = find_contours(frame, hue)
     
     lines = []
-    #cv2.drawContours(frame, contours, -1, (0, 0, 255), 1)
-    
+
     for contour in contours:
         
+        # initial filtration, do not consider contours that are too small (smaller than frame_area / 3000)
         if cv2.contourArea(contour) >= frame_area / 3000:
             
+            # represent contour using lines
             contour_lines = determine_lines_for_contour(contour)
             
             new_lines = True
             
+            # perform grouping until the ungrouped lines are divided by the algorithm
             while new_lines:
-                contour_lines, new_lines = group_lines(contour_lines, True)
-
-            number_of_groups = sys.maxsize
-
-            while number_of_groups > len(contour_lines):
-                number_of_groups = len(contour_lines)
-                contour_lines, _ = group_lines(contour_lines)
+                contour_lines, new_lines = group_lines(contour_lines, True, False, None, 4, max_line_distance)
 
             lines += contour_lines
 
     number_of_groups = sys.maxsize
-
+  
+    # group lines between all the contours in the current frame
     while number_of_groups > len(lines):
         number_of_groups = len(lines)
-        lines, _ = group_lines(lines, False, True, frame)
+        lines, _ = group_lines(lines, False, True, frame, 7, max_line_distance)
 
+    # remove lines based on number of points that they represent
+    # small amount of points indicate that the line is short so there is no need
+    # to calculate its length what is more computationally demanding
     lines = [line for line in lines if line["original"].shape[0] >= 6]
-    filter_small_lines(lines, frame.shape[1] / 20, frame.shape[0] / 20)
+    # remove lines based on their length
+    filter_small_lines(lines, frame_height / 20, frame_length / 20)
 
     return lines
 
 
-video = cv2.VideoCapture("Cut films/5.mp4")
+video = cv2.VideoCapture("Cut films/1.mp4")
 
 video_read_correctly, frame = video.read()
 
 cv2.namedWindow('binary frame')
-cv2.createTrackbar('H', 'binary frame', 20, 174, lambda x: None)
+cv2.createTrackbar('H', 'binary frame', 24, 174, lambda x: None)
 cv2.setTrackbarMin('H', 'binary frame', 5)
 H = cv2.getTrackbarPos('H', 'binary frame')
 
@@ -363,7 +411,9 @@ flann_matcher = cv2.FlannBasedMatcher(index_params, search_params)
 
 displ_x = 0
 displ_y = 0
-frame_area = frame.shape[0] * frame.shape[1]
+frame_height = frame.shape[0]
+frame_length = frame.shape[1]
+frame_area = frame_height * frame_length
 
 while video_read_correctly:
     #start = time.process_time()
@@ -392,18 +442,16 @@ while video_read_correctly:
     #end = time.process_time()
     #print(end - start)
     #input()
-    lines = detect_lines(frame, frame_area, H)
+    max_line_distance = (frame_height + frame_length) / 20
+    lines = detect_lines(frame, frame_area, H, max_line_distance)
 
-    
+    for line in lines:
 
-
-    #for line in lines:
-
-        #draw_line(line, frame)
+        draw_line(line, frame)
 
     cv2.imshow("binary frame", frame)
 
-    if cv2.waitKey(2) & 0xFF == ord('q'):
+    if cv2.waitKey(1) & 0xFF == ord('q'):
         break
     #input()
 
@@ -419,7 +467,3 @@ while video_read_correctly:
 
 video.release()
 cv2.destroyAllWindows()
-
-
-# przedstawic jak algorytm sie zmienial wraz z obrazkami i przykladami
-# poprawic zeby nie laczyl linii ktore sa daleko od siebie
