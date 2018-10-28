@@ -1,4 +1,3 @@
 # image_processing
-The image processing project for autonomic forklifts.
+The image processing project for detecting lines.
 
-#More info will be added!
