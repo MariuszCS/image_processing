@@ -497,7 +497,7 @@ cv2.namedWindow('binary frame')
 H = 24 # ~yellow
 
 next_frame = None
-orb = cv2.ORB_create(nfeatures=100)
+orb = cv2.ORB_create()
 kp1, des1 = orb.detectAndCompute(frame, None)
 FLANN_INDEX_LSH = 6
 index_params= dict(algorithm = FLANN_INDEX_LSH,
@@ -520,30 +520,46 @@ while video_read_correctly:
         kp2, des2 = orb.detectAndCompute(next_frame, None)
         matches = flann_matcher.match(des1, des2)
         matches = sorted(matches, key = lambda x:x.distance)
+        min_distance = matches[0].distance
         first_set = []
         second_set = []
         for match in matches:
-            first_set += [kp1[match.queryIdx].pt]
-            second_set += [kp2[match.trainIdx].pt]
+            d = match.distance
+            if d <= 2 * min_distance or d <= 5:
+                first_set += [kp1[match.queryIdx].pt]
+                second_set += [kp2[match.trainIdx].pt]
+            else:
+                break
         first_set = np.array(first_set, dtype=np.float)
         second_set = np.array(second_set, dtype=np.float)
 
-        ''' for p1,p2 in zip(first_set,second_set):
+        """ for p1,p2 in zip(first_set,second_set):
             cv2.circle(frame, (int(p1[0]), int(p1[1])), 5, (0, 0, 0), -1)
             cv2.circle(frame, (int(p2[0]), int(p2[1])), 5, (255, 255, 255), -1)
         cv2.imshow("binary frame", frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
-            break '''
+            break
+        input() """
+        if first_set.shape[0] > 5:
+            essential_matrix, mask = cv2.findEssentialMat(first_set, second_set, 1.0, (0.0, 0.0), cv2.RANSAC, 0.999, 1.0)
 
-        essential_matrix, mask = cv2.findEssentialMat(first_set, second_set, 1.0, (0.0, 0.0), cv2.RANSAC, 0.999, 1.0)
+            points, R, t, mask = cv2.recoverPose(essential_matrix, first_set, second_set, mask=mask)
 
-        points, R, t, mask = cv2.recoverPose(essential_matrix, first_set, second_set, mask=mask)
+            """ first_set = np.array([x for i, x in enumerate(first_set) if mask[i] == 1])
+            second_set = np.array([x for i, x in enumerate(second_set) if mask[i] == 1])
+            for p1,p2 in zip(first_set,second_set):
+                cv2.circle(frame, (int(p1[0]), int(p1[1])), 5, (255, 0, 0), -1)
+                cv2.circle(frame, (int(p2[0]), int(p2[1])), 5, (0, 255, 0), -1)
+            cv2.imshow("binary frame", frame)
 
-        '''first_set = np.array([x for i, x in enumerate(first_set) if mask[i] == 1])
-        second_set = np.array([x for i, x in enumerate(second_set) if mask[i] == 1])'''
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+            input() """
 
-        ref_point = np.matmul(R, ref_point) + t
+            ref_point = np.matmul(R, ref_point) + t
+        else:
+            print("Not enough corresponding features found")
 
         kp1 = kp2.copy()
         des1 = des2.copy()
